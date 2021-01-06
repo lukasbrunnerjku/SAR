@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# blender save files
+*.blend1
+
 # C extensions
 *.so
 
