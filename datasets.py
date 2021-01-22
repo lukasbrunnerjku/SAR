@@ -397,25 +397,25 @@ if __name__ == '__main__':
 
     ds = SARdata(folders, h, w, seq_len=9, use_custom_bboxes=True, cache=False, 
         transform=None, csw=5, isw=19)
-    item = ds[0]  # wraped images
-    wrapped = item['images']
-    # ds.show_images(wrapped, figsize=(8, 8))
-
+    item = ds[7] 
+    mask = item['mask']
     bboxes = item['bboxes']
-    
-    def show_bbox(img, bbox):
-        DPI=96
-        H, W = img.shape
-        fig = plt.figure(frameon=False, figsize=(W*2/DPI,H*2/DPI), dpi=DPI)
-        plt.imshow(img, origin='upper')
-        # coco: x_min, y_min, widht, height
-        width = bbox[2] - bbox[0]
-        height = bbox[3] - bbox[1]
-        rect = patches.Rectangle(bbox[:2], width , height, linewidth=2,
-            edgecolor='g', facecolor='none')
-        plt.gca().add_patch(rect)
-        plt.show()
+    images = item['images']
 
-    for img, bbox in zip(wrapped, bboxes):
-        show_bbox(img, bbox)
-        break
+    def show_bboxes(images, bboxes, mask):
+        DPI=96
+        H, W = images[0].shape
+        
+        for img in images:
+            fig = plt.figure(frameon=False, figsize=(W/DPI,H/DPI), dpi=DPI)
+            plt.imshow(img, origin='upper', cmap='gray')
+            # coco: x_min, y_min, width, height
+            for bbox in bboxes[:int(mask.sum())]:
+                width = bbox[2] - bbox[0]
+                height = bbox[3] - bbox[1]
+                rect = patches.Rectangle(bbox[:2], width , height, linewidth=2,
+                    edgecolor='g', facecolor='none')
+                plt.gca().add_patch(rect)
+            plt.show()
+
+    show_bboxes(images, bboxes, mask)

@@ -29,20 +29,21 @@ from blendtorch import btt
 
 def item_transform(item, source_format='pascal_voc', target_format='coco'):
     image = item["image"]  # h x w x 3
-    bboxes = item['bboxes']  # n x 4
-    cids = item["cids"]  # n,
+    bboxes = item['bboxes']  # nhuman x 4
+    cids = item["cids"]  # nhuman,
 
-    # h, w = image.shape[:2]
-    # bboxes = convert_bboxes_to_albumentations(bboxes, source_format,
-    #     rows=h, cols=w, check_validity=False)
-    # bboxes = convert_bboxes_to_albumentations(bboxes, target_format,
-    #     rows=h, cols=w, check_validity=False)
+    h, w = image.shape[:2]
+    bboxes = convert_bboxes_to_albumentations(bboxes, source_format,
+        rows=h, cols=w, check_validity=False)
+    bboxes = convert_bboxes_to_albumentations(bboxes, target_format,
+        rows=h, cols=w, check_validity=False)
 
+    # swap channels to format that pytorch accepts:
     image = image.transpose((2, 0, 1))  # 3 x h x w
     item = {
         "image": image,  # 3 x h x w
-        'bboxes': np.array(bboxes),  # n x 4
-        'cids': cids,  # n,
+        'bboxes': np.array(bboxes),  # nhuman x 4
+        'cids': cids,  # nhuman,
     }
     return item
 
@@ -52,6 +53,7 @@ classes = {
 
 
 def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
+    """ bbox format of 'coco' expected! -> xmin, ymin, width, height """
     os.makedirs(folder, exist_ok=True)
     DPI=96
     for step, item in enumerate(dl):
@@ -67,12 +69,13 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
         for i in range(length):
             axs[i].imshow(img[i].permute(1, 2, 0), origin='upper')
             for cid, bbox in zip(cids[i],bboxes[i]):
-                #rect = patches.Rectangle(bbox[:2],bbox[2],bbox[3],linewidth=2,
-                #    edgecolor='g',facecolor='none')
-                #axs[i].add_patch(rect)
-                #cls_ = int(cid.item()) if classes is None else classes[int(cid.item())] 
-                #axs[i].text(bbox[0]+10, bbox[1]+10, f'class: {cls_}', fontsize=14)
-                axs[i].scatter(*bbox.reshape(-1, 2).T)
+                # Rectangle needs xy of bottom left, width, height
+                # we use origin upper => xmin,ymin
+                rect = patches.Rectangle(bbox[:2],bbox[2],bbox[3],linewidth=2,
+                   edgecolor='g',facecolor='none')
+                axs[i].add_patch(rect)
+                cls_ = int(cid.item()) if classes is None else classes[int(cid.item())] 
+                axs[i].text(bbox[0]+10, bbox[1]+10, f'class: {cls_}', fontsize=14)
             axs[i].set_axis_off()
             axs[i].set_xlim(0,W-1)
             axs[i].set_ylim(H-1,0)
@@ -93,7 +96,7 @@ def main():
     with btt.BlenderLauncher(**launch_args) as bl:
         addr = bl.launch_info.addresses['DATA']
         ds = btt.RemoteIterableDataset(addr,  item_transform=item_transform, 
-            max_items=16)
+            max_items=4)
         dl = data.DataLoader(ds, batch_size=4, num_workers=4)
         
         iterate(dl)  # visualize, sanity check

@@ -20,15 +20,15 @@ DEFAULT_CONFIG = {
     'camera.scale': 2,  # standard deviation gaussian of position
     'camera.focalrange': (48, 52),  # focal length in mm
     ### human ### 
-    'scene.nhuman': 3,
+    'scene.nhuman': 1,
     'scene.humanclassprob': None,
-    'scene.humanheatrange': (0.9, 1.0), #(0.4, 0.8), !!!!
+    'scene.humanheatrange': (0.7, 1.0),
     'scene.humanrotation': (0, 2*np.pi),  # around z-axis
     ### tree ###
-    'scene.ntree': 8,
+    'scene.ntree': 1,
     'scene.treeclassprob': (0.7, 0.1, 0.1, 0.1),
-    'scene.treeheatrange': (0.1, 0.2), #(0.6, 0.9), !!!!
-    'scene.treealpharange': (0.01, 0.1), #(0.1, 0.2), !!!!
+    'scene.treeheatrange': (0.6, 0.9),
+    'scene.treealpharange': (0.05, 0.1),
     'scene.treerotation': (0, 2*np.pi),  # around z-axis
     ### ground ###
     # 'ground.texture': ?,  # select texture file
@@ -288,10 +288,11 @@ def main():
         bboxes = []
         for human in humans:
             # 2D points in cam space of 3D bbox
-            bbox3D = cam.bbox_object_to_pixel(human)  # 8 x 2
+            xy = cam.bbox_object_to_pixel(human)  # 8 x 2 are (x, y)
             # calculate 2D bbox in format: xmin, ymin, xmax, ymax
-            bboxes.append(np.array([*np.min(bbox3D, axis=0), 
-                *np.max(bbox3D, axis=0)]))  # 4,
+            bbox = (min(xy[:, 0]), min(xy[:, 1]), max(xy[:, 0]), 
+                max(xy[:, 1]))
+            bboxes.append(bbox)  # 4,
         return np.stack(bboxes, axis=0)  # nhuman x 4
 
     def pre_animation(cam):
