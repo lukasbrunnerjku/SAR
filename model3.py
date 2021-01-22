@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader
-from datasets import SARdata
+from datasets import SARdata, Transformation
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
@@ -8,6 +8,7 @@ import matplotlib.patches as patches
 import torchvision.ops as ops
 # tensorboard --logdir=runs
 from torch.utils.tensorboard import SummaryWriter
+import albumentations as A
 import os
 import argparse
 import sys 
@@ -19,26 +20,20 @@ logger = logging.getLogger(__name__)
 
 from models.yolo import Model as Yolo
 from utils.general import check_file, set_logging
+from utils.loss import ComputeLoss
     
 
 def train(model, data_loader, optimizer, writer):
     model.train()
     device = next(model.parameters()).device
-    for n_iter, (x, y, b) in enumerate(data_loader):
-        x = x.to(device)  # images
-        y = y.to(device)  # labels
-        b = b.to(device)  # number of boxes
-        targets = []
-        for i in range(len(x)):
-            d = {}
-            d['boxes'] = y[i, :b[i], :]
-            d['labels'] = torch.ones(b[i], dtype=torch.int64, device=device)
-            targets.append(d)
-        losses = model(x, targets)
-        loss = losses["loss_classifier"]
-        loss += losses["loss_box_reg"]
-        loss += losses["loss_objectness"]
-        loss += losses["loss_rpn_box_reg"]
+    for n_iter, batch in enumerate(data_loader):
+        batch = {k: v.to(device) for k, v in batch.items()}
+        images = batch['images']
+        pred = model(images)
+
+        compute_loss = ComputeLoss(model)  # init loss class
+        loss, loss_items = compute_loss(pred, targets)
+
         optimizer.zero_grad()
         loss.backward()
         writer.add_scalar('Loss/train', loss.item(), n_iter)
@@ -46,108 +41,22 @@ def train(model, data_loader, optimizer, writer):
 
 
 @torch.no_grad()
+def test(model, data_loader, optimizer, writer):
+    pass
+
+
+@torch.no_grad()
 def evaluate(model, data_loader, writer):
-    y_m = []
-    y_t = []
     model.eval()
     device = next(model.parameters()).device
-    for x, y, b in data_loader:
-        x = x.to(device)
-        out = model(x)
-        x = x.cpu().detach()
-        for index, res in enumerate(out):
-            bboxen = res["boxes"].cpu().detach()
-            scores = res["scores"].cpu().detach()
-            indices = ops.nms(bboxen, scores, 0.1)
-            bboxen = bboxen[indices]
-            scores = scores[indices]
-            y_model, y_target = compute_mapping(bboxen, scores, y[index, :b[index]])
-            y_m = list((*y_m, *y_model))
-            y_t = list((*y_t, *y_target))
-    mAP = compute_mAP(y_t, y_m)
+    for batch in data_loader:
+        batch = {k: v.to(device) for k, v in batch.items()}
+        images = batch['images']
+        pred = model(images)
+        
+    mAP = 0
     writer.add_scalar('mAP', mAP.item(), None)
     return mAP
-
-
-def show_bbox(images, bboxes, bboxes_target):
-    DPI = 96
-    H, W = images[0].shape
-    for img in images:
-        fig = plt.figure(frameon=False, figsize=(W * 2 / DPI, H * 2 / DPI), dpi=DPI)
-        plt.imshow(images[4], "gray", origin='upper')
-        # coco: x_min, y_min, widht, height
-        for bbox in bboxes:
-            width = bbox[2] - bbox[0]
-            height = bbox[3] - bbox[1]
-            rect = patches.Rectangle(bbox[:2], width, height, linewidth=2, edgecolor='g', facecolor='none')
-            plt.gca().add_patch(rect)
-        for bbox in bboxes_target:
-            width = bbox[2] - bbox[0]
-            height = bbox[3] - bbox[1]
-            rect = patches.Rectangle(bbox[:2], width, height, linewidth=2, edgecolor='r', facecolor='none')
-            plt.gca().add_patch(rect)
-        plt.show()
-        break
-
-
-def compute_mapping(bboxes, scores, y):
-    matrix_iou = ops.box_iou(bboxes, y)
-    matrix_iou[matrix_iou >= 0.05]=1
-    matrix_iou[matrix_iou < 0.05]=0
-    y_model=[]
-    y_target=[]
-    bboxes_model = np.ones(len(bboxes))
-    bboxes_target = np.ones(len(y))
-    for col in range(matrix_iou.shape[1]):
-        first_entry = True
-        for row in range(matrix_iou.shape[0]):
-            if matrix_iou[row,col]==1 and first_entry:
-                y_model.append(float(scores[row]))
-                y_target.append(1)
-                bboxes_model[row]=0
-                bboxes_target[col]=0
-                first_entry=False
-            elif matrix_iou[row,col]==1 and not first_entry:
-                bboxes_model[row] = 0
-    for bbox in range(bboxes_model.shape[0]):
-        if bboxes_model[bbox]==1:
-            y_model.append(float(scores[bbox]))
-            y_target.append(0)
-    for bbox in range(bboxes_target.shape[0]):
-        if bboxes_target[bbox]==1:
-            y_model.append(0)
-            y_target.append(1)
-    return y_model, y_target
-
-
-def compute_mAP(y_true, y_model):
-    y_true = torch.tensor(y_true)
-    y_model = torch.tensor(y_model)
-    topk = torch.topk(y_model,len(y_model))
-    y_true = y_true[topk.indices]
-    y_model = y_model[topk.indices]
-    mAP = []
-    recall_old = 0
-    true_positiv = false_positiv = false_negativ = 0
-    for i in range(len(y_model)):
-        y_true_current = torch.tensor(y_true[:i+1])
-        y_model_current = torch.tensor(y_model[:i+1])
-        y_model_current[y_model_current>0]=1
-        true_positiv = y_true_current[y_model_current.to(dtype=torch.bool)].sum()
-        false_negativ = torch.tensor(y_true.sum()-true_positiv, dtype=torch.float32)
-        false_positiv = y_model_current[torch.tensor(1-y_true_current, dtype=torch.bool)].sum()
-        if not true_positiv == 0:
-            precision = true_positiv / (true_positiv + false_positiv)
-        else:
-            precision = 0
-        recall = true_positiv / (true_positiv + false_negativ)
-        AP = (recall - recall_old)*precision
-        mAP.append(AP)
-        recall_old = recall
-    print(f"TP: {true_positiv}")
-    print(f"FP: {false_positiv}")
-    print(f"FN: {false_negativ}")
-    return torch.tensor(mAP).sum()
 
 
 def autopad(k, p=None):  # kernel, padding
@@ -303,6 +212,7 @@ if __name__ == '__main__':
     # hyper parameters
     h, w = 512, 640
     batch_size = 1
+    nc = 1  # number of classes
     num_workers = 0
     num_epochs = 10
     lr = 0.01
@@ -311,7 +221,7 @@ if __name__ == '__main__':
     epoch_model_tag = 'model_epoch'
     resume = False
     model_path_to_load = r"models/best_model"
-    chh = 32  # lstm hidden channels
+    chh = 64  # lstm hidden channels
     lr_step_size = 10  # number of epochs till lr decrease
 
     # ImageNet statistic
@@ -325,9 +235,26 @@ if __name__ == '__main__':
     os.makedirs("./models", exist_ok=True)  # create 'models' folder
 
     lstm_kwargs={'chh': chh, 'cho': 3, 'batch_first': True}
-    yolo_kwargs={'cfg': opt.cfg, 'nc': 1, 'ch': 3}
+    yolo_kwargs={'cfg': opt.cfg, 'nc': nc, 'ch': 3}
     model = Model(lstm_kwargs, yolo_kwargs)
     model = model.to(device)
+
+    # hyper-parameters for loss function of yolo
+    hyp = dict()
+    hyp['cls_pw'] = (1, 0.5, 2.0)  # cls BCELoss positive_weight
+    hyp['obj_pw'] = (1, 0.5, 2.0)  # obj BCELoss positive_weight
+    hyp['fl_gamma'] = (0, 0.0, 2.0)  # focal loss gamma
+    hyp['box'] = (1, 0.02, 0.2)  # box loss gain
+    hyp['obj'] = (1, 0.2, 4.0)  # obj loss gain (scale with pixels)
+    hyp['cls'] = (1, 0.2, 4.0)  # cls loss gain
+
+    hyp['box'] *= 3. / nl  # scale to layers
+    hyp['cls'] *= nc / 80. * 3. / nl  # scale to classes and layers
+    hyp['obj'] *= (imgsz / 640) ** 2 * 3. / nl  # scale to image size and layers
+
+    model.hyp = hyp  # attach hyperparameters to model
+    model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
+    model.nc = nc  # attach number of classes to model
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
@@ -352,10 +279,20 @@ if __name__ == '__main__':
     folders = [f'data/F{i}' for i in range(12)]
     folders2 = [f'data/T{i}' for i in range(8)]
 
-    data = SARdata(folders, h, w, seq_len=13, use_custom_bboxes=True, 
-        cache=False, transform=None, csw=5, isw=13)
-    data2 = SARdata(folders2, h, w, seq_len=13, use_custom_bboxes=True, 
-        cache=False, transform=None, csw=1, isw=13)
+    augmentations = [
+        A.RandomBrightnessContrast(brightness_limit=0.4, 
+            contrast_limit=0.4, p=0.5),
+        A.GaussNoise(p=0.5),
+    ]
+    
+    transform = Transformation(h, w, mean, std, 
+        bbox_format='coco', augmentations=augmentations, 
+        normalize=True, resize_crop=False, bboxes=True)
+
+    data = SARdata(folders, h, w, seq_len=11, use_custom_bboxes=True, 
+        cache=False, transform=transform, csw=5, isw=13)
+    data2 = SARdata(folders2, h, w, seq_len=11, use_custom_bboxes=True, 
+        cache=False, transform=transform, csw=1, isw=13)
     data_loader = DataLoader(data, batch_size=batch_size, shuffle=True,
         num_workers=num_workers)
     data_loader2 = DataLoader(data2, batch_size=1, shuffle=False,
@@ -363,11 +300,6 @@ if __name__ == '__main__':
 
     check_dataloader(data_loader)
     check_dataloader(data_loader2)
-
-    exit()
-    {'images': wrapped, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
-
-    
 
     writer = SummaryWriter()
 

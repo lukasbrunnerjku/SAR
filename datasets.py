@@ -504,7 +504,7 @@ if __name__ == '__main__':
     transform = None
     transform = Transformation(h, w, mean, std, 
         bbox_format='coco', augmentations=augmentations, 
-        normalize=False, resize_crop=False, bboxes=True)
+        normalize=True, resize_crop=False, bboxes=True)
 
     ds = SARdata(folders, h, w, seq_len=5, use_custom_bboxes=True, cache=False, 
         transform=transform, csw=5, isw=13)
