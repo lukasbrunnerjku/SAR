@@ -47,7 +47,6 @@ def evaluate(model, data_loader, writer):
     device = next(model.parameters()).device
     for x, y, b in data_loader:
         x = x.to(device)
-        model.eval()
         out = model(x)
         x = x.cpu().detach()
         for index, res in enumerate(out):
@@ -171,7 +170,7 @@ class Conv(nn.Module):
             self.act = nn.Identity()
 
     def forward(self, x):
-        return self.act(self.bn(self.conv(x)))  # forward() missing 1 required positional argument: 'offset'
+        return self.act(self.bn(self.conv(x)))
 
 
 class Focus(nn.Module):
@@ -214,7 +213,7 @@ class ConvLSTM(nn.Module):
         # increase receptive field:
         self.focus = Focus(chi=1, cho=16, k=3)  
         # focus on regions of interest:
-        self.dconv = Conv(chi=16, cho=32, k=3, deform=True)
+        self.dconv = Conv(chi=16, cho=32, k=3, deform=False)
 
         # sigmoid as input activation when rare events are interesting:
         self.Z  = Conv(chi=32, cho=chh, k=3, act=self.sigmoid)  # self.tanh
@@ -245,7 +244,6 @@ class ConvLSTM(nn.Module):
         for i, x_ in enumerate(x):
             # pre-process input:
             x_ = self.focus(x_)  # bsz x 1 x h x w
-            print('yeey')
             x_ = self.dconv(x_)
 
             # input activations:
@@ -284,6 +282,7 @@ class Model(nn.Module):
 
 if __name__ == '__main__':
     device = "cuda" if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
     print(f'using device: {device}')
 
     # hyper parameters
@@ -299,17 +298,6 @@ if __name__ == '__main__':
     lstm_hidden = 32  # hidden channels
 
     os.makedirs("./models", exist_ok=True)  # create 'models' folder
-
-    x = torch.rand(2, 1, 40, 40)
-    focus = Focus(chi=1, cho=16, k=3)
-    dconv = Conv(chi=16, cho=32, k=3, deform=False)
-    print('pre focus')
-    x = focus(x)
-    print('post focus')
-    print(x.shape)
-    x = dconv(x)
-    print(x.shape)
-    exit()
 
     model = Model(lstm_args=(lstm_hidden, 3))
     model = model.to(device)
@@ -348,7 +336,7 @@ if __name__ == '__main__':
 
     writer = SummaryWriter()
 
-    evaluate(model, data_loader2, writer)
+    #evaluate(model, data_loader2, writer)
 
     for epoch in range(start_epoch, start_epoch + num_epochs):
         train(model, data_loader, optimizer, writer)
