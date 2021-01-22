@@ -355,6 +355,16 @@ class SARdata(SARbase):
             # lane['polys'] list of list
             raise NotImplementedError
 
+        # can apply augmentation, scaling, normalization
+        if self.transform is not None:
+            # add labels to the end of bboxes for albumentations:
+            # n x 4 with n x 1
+            bboxes_ = np.concatenate([bboxes_, 
+                np.arange(len(bboxes_))[:, None]], axis=-1)
+            out = self.transform(image=wrapped, bboxes=bboxes_)
+            wrapped = out['image']
+            bboxes_ = out['bboxes'][:, :4]  # drop added labels
+
         bboxes[:len(bboxes_)] = bboxes_  # n_max x 4
         cids = np.zeros((len(bboxes), ))  # n_max,
         mask = np.zeros((len(bboxes), ))
@@ -478,8 +488,9 @@ if __name__ == '__main__':
     h, w = 512, 640
 
     augmentations = [
-        A.RandomBrightnessContrast(),
-        A.GaussNoise(p=0.6),
+        A.RandomBrightnessContrast(brightness_limit=0.4, 
+            contrast_limit=0.4, p=1.0),
+        A.GaussNoise(p=1.0),
     ]
 
     """
@@ -490,13 +501,12 @@ if __name__ == '__main__':
     ], p=1),
     """
     
-    
     transform = None
     transform = Transformation(h, w, mean, std, 
         bbox_format='coco', augmentations=augmentations, 
         normalize=False, resize_crop=False, bboxes=True)
 
-    ds = SARdata(folders, h, w, seq_len=3, use_custom_bboxes=True, cache=False, 
+    ds = SARdata(folders, h, w, seq_len=5, use_custom_bboxes=True, cache=False, 
         transform=transform, csw=5, isw=13)
     item = ds[7] 
     mask = item['mask']
