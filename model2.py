@@ -12,6 +12,7 @@ import matplotlib.patches as patches
 import torchvision.ops as ops
 # tensorboard --logdir=runs
 from torch.utils.tensorboard import SummaryWriter
+import os
 
 
 def train(model, data_loader, optimizer, writer):
@@ -151,7 +152,7 @@ def autopad(k, p=None):  # kernel, padding
 
 
 class Conv(nn.Module):
-    def __init__(self, chi, cho, k=1, p=None, s=1, deform=False, g=1, act=True):
+    def __init__(self, chi, cho, k=1, s=1, p=None, g=1, act=True, deform=False):
         # chi ... input channels
         # cho ... output channels
         super().__init__()
@@ -163,14 +164,14 @@ class Conv(nn.Module):
         self.bn = nn.BatchNorm2d(cho)
 
         if act is True:
-            self.act = nn.SiLU()
+            self.act = nn.ReLU()  # nn.SiLU()
         elif isinstance(act, nn.Module):
             self.act = act
         else:
             self.act = nn.Identity()
 
     def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
+        return self.act(self.bn(self.conv(x)))  # forward() missing 1 required positional argument: 'offset'
 
 
 class Focus(nn.Module):
@@ -181,7 +182,8 @@ class Focus(nn.Module):
 
     def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
         return self.conv(torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], 
-            x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1))
+            x[..., ::2, 1::2], x[..., 1::2, 1::2]], dim=1))
+        
 
 
 class Bottleneck(nn.Module):
@@ -202,9 +204,10 @@ class ConvLSTM(nn.Module):
     # no forget gate, focus on either external x(t) or
     # internal y(t-1) information! => less parameters
 
-    def __init__(self, chh, cho):  
+    def __init__(self, chh, cho, batch_first=True):  
         # chh ... hidden channels
         super().__init__()
+        self.batch_first = batch_first
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
         
@@ -234,13 +237,15 @@ class ConvLSTM(nn.Module):
         self.apply(init)  # recursively to every submodule
 
     def forward(self, x):
-        # bsz x seq_len x h x w -> seq_len x bsz x h x w
-        x = x.permute(1, 0, 2, 3)
+        if self.batch_first:  # bsz x seq_len x chi x h x w
+            x = x.permute(1, 0, 2, 3, 4)
+            # -> seq_len x bsz x chi x h x w
 
         # go through elements of input sequence:
         for i, x_ in enumerate(x):
             # pre-process input:
-            x_ = self.focus(x_)
+            x_ = self.focus(x_)  # bsz x 1 x h x w
+            print('yeey')
             x_ = self.dconv(x_)
 
             # input activations:
@@ -261,15 +266,18 @@ class ConvLSTM(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self):
+    def __init__(self, lstm_args):
         super().__init__()
         backbone = resnet_fpn_backbone("resnet50", True)
         # 2 classes, one for background!
         self.rcnn = FasterRCNN(backbone, num_classes=2, 
             image_mean=None, image_std=None)
-        self.lstm = ConvLSTM()
+        self.lstm = ConvLSTM(*lstm_args, batch_first=True)
 
     def forward(self, x, targets=None):
+        # x: bsz x seq_len x h x w <- from dataloader
+        x = x.unsqueeze(2)  # each element is a grayscale image
+        # x: bsz x seq_len x 1 x h x w <- lstm
         x = self.lstm(x)
         return self.rcnn(x, targets) if self.training else self.rcnn(x)
 
@@ -286,16 +294,29 @@ if __name__ == '__main__':
     save_interval = 15
     best_model_tag = 'best_model'
     epoch_model_tag = 'model_epoch'
-
     resume = False
     model_path_to_load = r"models/best_model"
+    lstm_hidden = 32  # hidden channels
 
-    model = Model()
+    os.makedirs("./models", exist_ok=True)  # create 'models' folder
+
+    x = torch.rand(2, 1, 40, 40)
+    focus = Focus(chi=1, cho=16, k=3)
+    dconv = Conv(chi=16, cho=32, k=3, deform=False)
+    print('pre focus')
+    x = focus(x)
+    print('post focus')
+    print(x.shape)
+    x = dconv(x)
+    print(x.shape)
+    exit()
+
+    model = Model(lstm_args=(lstm_hidden, 3))
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     num_params = sum(p.numel() for p in model.parameters())
-    print(f'model with: {num_params/10**6}M number of parameters')
+    print(f'model with: {num_params/10**6:.2f}M number of parameters')
 
     if resume:
         print('load checkpoint...')
