@@ -1,19 +1,25 @@
 import torch
-import torchvision.models.detection as m
-import torchvision.models as back
 from torch.utils.data import DataLoader
-from dataset_computer_vision import SARdata
+from datasets import SARdata
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
-from torchvision.models.detection import FasterRCNN
-from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 import matplotlib.patches as patches
 import torchvision.ops as ops
 # tensorboard --logdir=runs
 from torch.utils.tensorboard import SummaryWriter
 import os
+import argparse
+import sys 
+import logging
+# -> clone yolov5 repo into yolov5 folder 
+# to run '$ python *.py' files in subdirectories
+sys.path.append('../yolov5')  
+logger = logging.getLogger(__name__)
 
+from models.yolo import Model as Yolo
+from utils.general import check_file, set_logging
+    
 
 def train(model, data_loader, optimizer, writer):
     model.train()
@@ -263,28 +269,39 @@ class ConvLSTM(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, lstm_args):
+    def __init__(self, lstm_kwargs, yolo_kwargs):
         super().__init__()
-        backbone = resnet_fpn_backbone("resnet50", True)
-        # 2 classes, one for background!
-        self.rcnn = FasterRCNN(backbone, num_classes=2, 
-            image_mean=None, image_std=None)
-        self.lstm = ConvLSTM(*lstm_args, batch_first=True)
+        self.yolo = Yolo(**yolo_kwargs)
+        self.lstm = ConvLSTM(**lstm_kwargs)
 
-    def forward(self, x, targets=None):
+    def forward(self, x):
         # x: bsz x seq_len x h x w <- from dataloader
         x = x.unsqueeze(2)  # each element is a grayscale image
         # x: bsz x seq_len x 1 x h x w <- lstm
         x = self.lstm(x)
-        return self.rcnn(x, targets) if self.training else self.rcnn(x)
+        x = self.yolo(x)
+        return x
+
+
+def check_dataloader(dl):
+    batch = next(iter(dl))
+    for k, v in batch.items():
+        print(k, v.shape)
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--cfg', type=str, default='yolov5s.yaml', help='model.yaml')
+    opt = parser.parse_args()
+    opt.cfg = check_file(opt.cfg)  # check file
+    set_logging()
+
     device = "cuda" if torch.cuda.is_available() else 'cpu'
     device = 'cpu'
     print(f'using device: {device}')
 
     # hyper parameters
+    h, w = 512, 640
     batch_size = 1
     num_workers = 0
     num_epochs = 10
@@ -294,19 +311,30 @@ if __name__ == '__main__':
     epoch_model_tag = 'model_epoch'
     resume = False
     model_path_to_load = r"models/best_model"
-    lstm_hidden = 32  # hidden channels
+    chh = 32  # lstm hidden channels
     lr_step_size = 10  # number of epochs till lr decrease
+
+    # ImageNet statistic
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+
+    # for grayscale use mean over RGB channels:
+    mean = sum(mean) / 3.0
+    std = sum(std) / 3.0
 
     os.makedirs("./models", exist_ok=True)  # create 'models' folder
 
-    model = Model(lstm_args=(lstm_hidden, 3))
+    lstm_kwargs={'chh': chh, 'cho': 3, 'batch_first': True}
+    yolo_kwargs={'cfg': opt.cfg, 'nc': 1, 'ch': 3}
+    model = Model(lstm_kwargs, yolo_kwargs)
     model = model.to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
         step_size=lr_step_size, gamma=0.1)
 
     num_params = sum(p.numel() for p in model.parameters())
-    print(f'model with: {num_params/10**6:.2f}M number of parameters')
+    print(f'Model with: {num_params/10**6:.2f}M number of parameters')
 
     if resume:
         print('load checkpoint...')
@@ -324,24 +352,26 @@ if __name__ == '__main__':
     folders = [f'data/F{i}' for i in range(12)]
     folders2 = [f'data/T{i}' for i in range(8)]
 
-    h, w = 512, 640
-
     data = SARdata(folders, h, w, seq_len=13, use_custom_bboxes=True, 
-        cache=False, transform=None, csw=5, isw=19)
-    data2 = SARdata(folders2, h, w, seq_len=13, use_custom_bboxes=False, 
-        cache=False, transform=None, csw=1, isw=13, evaluate=True)
+        cache=False, transform=None, csw=5, isw=13)
+    data2 = SARdata(folders2, h, w, seq_len=13, use_custom_bboxes=True, 
+        cache=False, transform=None, csw=1, isw=13)
     data_loader = DataLoader(data, batch_size=batch_size, shuffle=True,
         num_workers=num_workers)
     data_loader2 = DataLoader(data2, batch_size=1, shuffle=False,
         num_workers=num_workers)
 
-    # ImageNet statistic
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
+    check_dataloader(data_loader)
+    check_dataloader(data_loader2)
+
+    exit()
+    {'images': wrapped, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
+
+    
 
     writer = SummaryWriter()
 
-    #evaluate(model, data_loader2, writer)
+    evaluate(model, data_loader2, writer)
 
     for epoch in range(start_epoch, start_epoch + num_epochs):
         train(model, data_loader, optimizer, writer)

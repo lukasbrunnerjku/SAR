@@ -384,6 +384,78 @@ def iterate(dl):
         plt.close(fig)
 
 
+class Transformation:
+
+        def __init__(self, h, w, mean, std, bbox_format='coco',
+            augmentations: List = None, normalize=True,
+            resize_crop=False, bboxes=True):
+            super().__init__()
+            self.resize_crop = resize_crop
+            self.normalize = normalize
+            self.mean = mean 
+            self.std = std 
+            self.h = h 
+            self.w = w
+            self.augmentations = augmentations
+            self.bbox_format = bbox_format 
+            self.bboxes = bboxes
+
+            # build transformation
+            if augmentations is None:
+                # standard augmentation if not given explicitly
+                transformations = [
+                    A.HueSaturationValue(p=0.5),
+                    A.ChannelShuffle(p=0.4),
+                    A.HorizontalFlip(p=0.2),
+                    A.GaussNoise(p=0.3),
+                ]
+            else:
+                transformations = augmentations
+
+            if resize_crop:
+                transformations.extend([
+                    # rescale an image so that minimum side is equal to max_size,
+                    # keeping the aspect ratio of the initial image.
+                    A.SmallestMaxSize(max_size=min(h, w)),
+                    A.RandomCrop(height=h, width=w),
+                ])
+
+            if normalize:  # zero mean, unit variance, range: [0, 1]
+                transformations.append(A.Normalize(mean=mean, std=std))  
+            
+            if bboxes:
+                bbox_params = A.BboxParams(
+                    # pascal_voc, albumentatons, coco, yolo
+                    format=bbox_format,  
+                    # < min_area (in pixels) will drop bbox
+                    min_area=50,  
+                    # < min_visibility (relative to input bbox) will drop bbox
+                    min_visibility=0.5,  
+                )
+            else:
+                bbox_params = None
+
+            self.transform_fn = A.Compose(transformations, 
+                bbox_params=bbox_params)
+
+        def __call__(self, **items):
+            return self.transform_fn(**items)
+
+
+def convert_bbox_format(bboxes, source_fmt, target_fmt,
+    h, w):
+    # pascal_voc: [x_min, y_min, x_max, y_max]
+    # albumentatons: normalized [x_min, y_min, x_max, y_max]
+    # coco: [x_min, y_min, width, height]
+    # yolo: normalized [x_center, y_center, width, height]
+    if source_fmt != 'albumentations':
+        bboxes = convert_bboxes_to_albumentations(bboxes, 
+            source_fmt, rows=h, cols=w)
+    bboxes = convert_bboxes_from_albumentations(bboxes,
+        target_fmt, rows=h, cols=w)
+    return bboxes
+
+
 if __name__ == '__main__':
     folders = [f'data/F{i}' for i in range(12)]
     h, w = 512, 640
@@ -395,8 +467,37 @@ if __name__ == '__main__':
     ds.show_image(integral)
     """
 
-    ds = SARdata(folders, h, w, seq_len=9, use_custom_bboxes=True, cache=False, 
-        transform=None, csw=5, isw=19)
+    # ImageNet statistic
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+
+    # for grayscale use mean over RGB channels:
+    mean = sum(mean) / 3.0
+    std = sum(std) / 3.0
+
+    h, w = 512, 640
+
+    augmentations = [
+        A.RandomBrightnessContrast(),
+        A.GaussNoise(p=0.6),
+    ]
+
+    """
+    A.OneOf([
+        A.RandomBrightnessContrast(),
+        # FDA ... fourier domain adaptation
+        A.FDA(some_images, read_fn=lambda x: x),
+    ], p=1),
+    """
+    
+    
+    transform = None
+    transform = Transformation(h, w, mean, std, 
+        bbox_format='coco', augmentations=augmentations, 
+        normalize=False, resize_crop=False, bboxes=True)
+
+    ds = SARdata(folders, h, w, seq_len=3, use_custom_bboxes=True, cache=False, 
+        transform=transform, csw=5, isw=13)
     item = ds[7] 
     mask = item['mask']
     bboxes = item['bboxes']
