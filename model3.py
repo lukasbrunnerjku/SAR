@@ -23,15 +23,15 @@ from utils.general import check_file, set_logging
 from utils.loss import ComputeLoss
     
 
-def train(model, data_loader, optimizer, writer):
+def train(model, data_loader, compute_loss, optimizer, writer):
     model.train()
     device = next(model.parameters()).device
     for n_iter, batch in enumerate(data_loader):
         batch = {k: v.to(device) for k, v in batch.items()}
         images = batch['images']
         pred = model(images)
-
-        compute_loss = ComputeLoss(model)  # init loss class
+        
+        targets ??
         loss, loss_items = compute_loss(pred, targets)
 
         optimizer.zero_grad()
@@ -248,8 +248,10 @@ if __name__ == '__main__':
     hyp['obj'] = (1, 0.2, 4.0)  # obj loss gain (scale with pixels)
     hyp['cls'] = (1, 0.2, 4.0)  # cls loss gain
 
+    nl = model.model[-1].nl  # number of detection layers
     hyp['box'] *= 3. / nl  # scale to layers
     hyp['cls'] *= nc / 80. * 3. / nl  # scale to classes and layers
+    imgsz = [h, w]
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / nl  # scale to image size and layers
 
     model.hyp = hyp  # attach hyperparameters to model
@@ -259,6 +261,8 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
         step_size=lr_step_size, gamma=0.1)
+
+    compute_loss = ComputeLoss(model)  # init loss class
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f'Model with: {num_params/10**6:.2f}M number of parameters')
@@ -306,7 +310,7 @@ if __name__ == '__main__':
     evaluate(model, data_loader2, writer)
 
     for epoch in range(start_epoch, start_epoch + num_epochs):
-        train(model, data_loader, optimizer, writer)
+        train(model, data_loader, compute_loss, optimizer, writer)
         metric = evaluate(model, data_loader2, writer)
 
         if metric > best_metric:

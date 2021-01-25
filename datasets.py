@@ -345,15 +345,36 @@ class SARdata(SARbase):
         wrapped = self.get_wrapped_images(images, poses, self.K, z)  # seq_len x h x w
 
         bboxes = np.zeros((self.n_max, 4))
+        bbox_empty = False
+
         if self.use_custom_bboxes:
             # List[List[float]], format: x_min, x_max, y_min, y_max
             bboxes_ = self.bboxes[f'img_{site}_{line}_{cidx + 1}']['bbox']
-            bboxes_ = np.array(bboxes_)  # n x 4
-            # format: pascal_voc - x_min, ymin, x_max, y_max
-            bboxes_[:, [1, 2]] = bboxes_[:, [2, 1]]  # center image annotation
+            if len(bboxes_)==0:
+                bboxes_ = np.zeros((self.n_max, 4))
+                bbox_empty = True
+            else:
+                bboxes_ = np.array(bboxes_)  # n x 4
+                # format: pascal_voc - xmin, ymin, xmax, ymax
+                bboxes_[:, [1, 2]] = bboxes_[:, [2, 1]]  # center image annotation
         else: 
             # lane['polys'] list of list
-            raise NotImplementedError
+            bboxes_ = lane['polys']
+            if bboxes_ is None:
+                bboxes_ = np.zeros((self.n_max, 4))
+                bbox_empty = True
+            else:
+                # polygons => points with (x, y) value
+                # make axis aligned bboxes of polys
+                bboxes_ = np.array(bboxes_)  # npolys x npoints x 2
+                # => polys can have more then 4 points
+                xmin = np.min(bboxes_[..., 0], axis=-1)  # npolys,
+                xmax = np.max(bboxes_[..., 0], axis=-1)  # npolys,
+                ymin = np.min(bboxes_[..., 1], axis=-1)  # npolys,
+                ymax = np.max(bboxes_[..., 1], axis=-1)  # npolys,
+                # format: pascal_voc - xmin, ymin, xmax, ymax
+                bboxes_ = np.stack([xmin, ymin, xmax, ymax], axis=-1)  # npolys x 4
+                # => we are now axis aligned!
 
         # can apply augmentation, scaling, normalization
         if self.transform is not None:
@@ -503,7 +524,7 @@ if __name__ == '__main__':
     
     transform = None
     transform = Transformation(h, w, mean, std, 
-        bbox_format='coco', augmentations=augmentations, 
+        bbox_format='pascal_voc', augmentations=augmentations, 
         normalize=True, resize_crop=False, bboxes=True)
 
     ds = SARdata(folders, h, w, seq_len=5, use_custom_bboxes=True, cache=False, 
