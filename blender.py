@@ -289,11 +289,29 @@ def main():
         for human in humans:
             # 2D points in cam space of 3D bbox
             xy = cam.bbox_object_to_pixel(human)  # 8 x 2 are (x, y)
+            # care!! 
+            # for objects outside the camera view space bounding boxes
+            # will either exceed the spatial dimensions or take on
+            # negative values, thus bound xy:
+            h, w = cfg['camera.shape']
+            xy[:, 0] = np.clip(xy[:, 0], 0, w-1)  # bound x by [0, w-1]
+            xy[:, 1] = np.clip(xy[:, 1], 0, h-1)  # bound y by [0, h-1]
+
             # calculate 2D bbox in format: xmin, ymin, xmax, ymax
             bbox = (min(xy[:, 0]), min(xy[:, 1]), max(xy[:, 0]), 
                 max(xy[:, 1]))
+            
+            # filter bboxes that are invalid,
+            # xmin = xmax or ymin = ymax -> not inside camera view
+            if bbox[0] == bbox[2] or bbox[1] == bbox[3]:  
+                continue
             bboxes.append(bbox)  # 4,
-        return np.stack(bboxes, axis=0)  # nhuman x 4
+        if len(bboxes) > 1:
+            return np.stack(bboxes, axis=0)  # nhuman x 4
+        elif len(bboxes) == 1:
+            return np.array(bboxes)  # 1 x 4
+        else:  # no valid bboxes
+            return np.array([])  # shape: 0,
 
     def pre_animation(cam):
         nonlocal humans, trees, cam_gen      
@@ -308,8 +326,9 @@ def main():
         
         pub.publish(
             image=off.render(),  # h x w x 3
-            bboxes=bboxes,  # n x 4
-            cids=np.zeros((len(bboxes), )),
+            # note: nhuman possibly 0 !
+            bboxes=bboxes,  # nhuman x 4
+            cids=np.ones((len(bboxes), )),  # class label: 1
         )
 
     def post_animation():
