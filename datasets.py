@@ -310,14 +310,33 @@ class SARdata(SARbase):
 
         return wrapped
 
+    def empty_annotations(self):
+        nhuman_max = self.n_max
+        bboxes = np.zeros((nhuman_max, 4), dtype=np.float32)  # n_max x 4
+        cids = np.zeros((nhuman_max, ), dtype=np.int64)  # n_max, 
+        mask = np.zeros((nhuman_max, ))
+        item = {'bboxes': bboxes, 'cids': cids, 'mask': mask}
+        return item
+
     def __getitem__(self, idx):
         lane = self.data[idx]  # select lane
         images = lane['images']
         poses = lane['poses']
-        cidx = lane['annotated_image']
+        cidx = lane['annotated_image']  # can be None
         site = lane['site']  # e.g. F0
         line = lane['line']  # e.g. 3
 
+        # if cidx are None so are polys and thus we have a
+        # lane without any annotations
+        if cidx is None:
+            item = self.empty_annotations()
+            z = self.getAGL.get(site, self.default_agl)
+            # idc=None because center image is center of those images
+            wrapped = self.get_wrapped_images(images, 
+                poses, self.K, z)  # seq_len x h x w
+            item['images'] = wrapped
+            return item
+        
         w = self.csw // 2
         cidx = np.random.randint(cidx - w, cidx + w + 1)  # [a, b)
 
@@ -345,15 +364,12 @@ class SARdata(SARbase):
         wrapped = self.get_wrapped_images(images, poses, self.K, z)  # seq_len x h x w
 
         bboxes = np.zeros((self.n_max, 4))
-        bbox_empty = False
-
         if self.use_custom_bboxes:
             # List[List[float]], format: x_min, x_max, y_min, y_max
             bboxes_ = self.bboxes[f'img_{site}_{line}_{cidx + 1}']['bbox']
-            if len(bboxes_)==0:
+            if len(bboxes_) == 0:
                 bboxes_ = np.zeros((self.n_max, 4))
-                bbox_empty = True
-            else:
+            if len(bboxes_) != 0:
                 bboxes_ = np.array(bboxes_)  # n x 4
                 # format: pascal_voc - xmin, ymin, xmax, ymax
                 bboxes_[:, [1, 2]] = bboxes_[:, [2, 1]]  # center image annotation
@@ -362,7 +378,6 @@ class SARdata(SARbase):
             bboxes_ = lane['polys']
             if bboxes_ is None:
                 bboxes_ = np.zeros((self.n_max, 4))
-                bbox_empty = True
             else:
                 # polygons => points with (x, y) value
                 # make axis aligned bboxes of polys
@@ -391,28 +406,8 @@ class SARdata(SARbase):
         mask = np.zeros((len(bboxes), ))
         mask[:len(bboxes_)] = 1  # n_max,
 
-        item = {'images': wrapped, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
+        item = {'image': wrapped, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
         return item
-
-
-def iterate(dl):
-    DPI=96
-    for step, item in enumerate(dl):
-        img, bboxes, cids = item['image'], item['bboxes'], item['cids']
-        H, W = img.shape[2:]  # img: b x 3 x h x w
-        fig = plt.figure(frameon=False, figsize=(W*2/DPI,H*2/DPI), dpi=DPI)
-        axs = [fig.add_axes([0,0,0.5,0.5]), fig.add_axes([0.5,0.0,0.5,0.5]), fig.add_axes([0.0,0.5,0.5,0.5]), fig.add_axes([0.5,0.5,0.5,0.5])]
-        for i in range(img.shape[0]):
-            axs[i].imshow(img[i].permute(1, 2, 0), origin='upper')
-            for cid, bbox in zip(cids[i],bboxes[i]):
-                rect = patches.Rectangle(bbox[:2],bbox[2],bbox[3],linewidth=2,edgecolor='r',facecolor='none')
-                axs[i].add_patch(rect)
-                axs[i].text(bbox[0]+10, bbox[1]+10, f'Class {cid.item()}', fontsize=18)
-            axs[i].set_axis_off()
-            axs[i].set_xlim(0,W-1)
-            axs[i].set_ylim(H-1,0)
-        fig.savefig(f'./data/output_{step}.png')
-        plt.close(fig)
 
 
 class Transformation:
@@ -509,8 +504,9 @@ if __name__ == '__main__':
     h, w = 512, 640
 
     augmentations = [
-        A.RandomBrightnessContrast(brightness_limit=0.4, 
-            contrast_limit=0.4, p=1.0),
+        A.RandomBrightnessContrast(brightness_limit=0.2, 
+            contrast_limit=0.2, p=1.0),
+        A.Blur(p=1.0),
         A.GaussNoise(p=1.0),
     ]
 
@@ -524,20 +520,20 @@ if __name__ == '__main__':
     
     transform = None
     transform = Transformation(h, w, mean, std, 
-        bbox_format='pascal_voc', augmentations=augmentations, 
+        bbox_format='pascal_voc', augmentations=[], #augmentations, 
         normalize=True, resize_crop=False, bboxes=True)
 
-    ds = SARdata(folders, h, w, seq_len=5, use_custom_bboxes=True, cache=False, 
+    ds = SARdata(folders, h, w, seq_len=3, use_custom_bboxes=False, cache=False, 
         transform=transform, csw=5, isw=13)
     item = ds[7] 
     mask = item['mask']
     bboxes = item['bboxes']
-    images = item['images']
+    images = item['image']
+    mask = item['mask']
 
     def show_bboxes(images, bboxes, mask):
         DPI=96
         H, W = images[0].shape
-        
         for img in images:
             fig = plt.figure(frameon=False, figsize=(W/DPI,H/DPI), dpi=DPI)
             plt.imshow(img, origin='upper', cmap='gray')

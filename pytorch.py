@@ -32,11 +32,12 @@ def item_transform(item, nhuman_max=6, source_format='pascal_voc',
     image = item["image"]  # h x w x 3
     bboxes = item['bboxes']  # nhuman x 4
     cids = item["cids"]  # nhuman,  
-    # class label of human = 1, no object = 0
-
+    
     # to be stacked by default collate_fn:
     bboxes_ = np.zeros((nhuman_max, 4), dtype=bboxes.dtype)
+    # class label of human = 1
     cids_ = np.zeros((nhuman_max, ), dtype=cids.dtype)
+    mask = np.zeros((nhuman_max, ), dtype=np.bool)
 
     if len(bboxes) != 0:
         h, w = image.shape[:2]
@@ -52,6 +53,7 @@ def item_transform(item, nhuman_max=6, source_format='pascal_voc',
         # for stacking:
         bboxes_[:len_valid] = bboxes 
         cids_[:len_valid] = 1
+        mask[:len_valid] = 1
 
     # we will need to create empty heatmap if no bboxes are given
     # in the other implementations dataset was filtered to only 
@@ -63,14 +65,13 @@ def item_transform(item, nhuman_max=6, source_format='pascal_voc',
         "image": image,  # 3 x h x w
         'bboxes': bboxes_,  # nhuman_max x 4
         'cids': cids_,  # nhuman_max,
+        'mask': mask,  # nhuman_max,
     }
     return item
 
 classes = {
-    0: 'background',
     1: 'human', 
 }
-
 
 def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
     """ bbox format of 'coco' expected! -> xmin, ymin, width, height """
@@ -78,6 +79,7 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
     DPI=96
     for step, item in enumerate(dl):
         img, bboxes, cids = item['image'], item['bboxes'], item['cids']
+        mask = item['mask']
         print('Received', img.shape, bboxes.shape, cids.shape)
 
         H, W = img.shape[-2:]  # img: b x 3 x h x w
@@ -89,9 +91,9 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
         for i in range(length):
             axs[i].imshow(img[i].permute(1, 2, 0), origin='upper')
             # bboxes: b x nhuman_max x 4, cids: b x nhuman_max
-            for cid, bbox in zip(cids[i],bboxes[i]):
-                if cid == 0:
-                    continue  # no object -> don't draw bbox
+            # no object -> don't draw bbox; masks: b x nhuman_max
+            m = mask[i].to(torch.bool)
+            for cid, bbox in zip(cids[i][m], bboxes[i][m]):
                 # Rectangle needs xy of bottom left, width, height
                 # we use origin upper => xmin,ymin
                 rect = patches.Rectangle(bbox[:2],bbox[2],bbox[3],linewidth=2,
@@ -126,7 +128,7 @@ def main():
             max_items=16)
         dl = data.DataLoader(ds, batch_size=4, num_workers=4)
         
-        iterate(dl)  # visualize, sanity check
+        iterate(dl, classes=classes)  # visualize, sanity check
 
 
 if __name__ == '__main__':

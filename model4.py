@@ -1278,6 +1278,7 @@ if __name__ == '__main__':
     augmentations = [
         A.RandomBrightnessContrast(brightness_limit=0.2, 
             contrast_limit=0.2, p=0.5),
+        A.Blur(p=0.5),
         A.GaussNoise(p=0.5),
     ]
     transform = Transformation(h, w, mean, std, 
@@ -1293,7 +1294,7 @@ if __name__ == '__main__':
     data2 = SARdata(folders2, h, w, seq_len=11, use_custom_bboxes=False, 
         cache=False, transform=transform2, csw=1, isw=13)
     data_loader = DataLoader(data, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers)
+        num_workers=num_workers, drop_last=True)
     data_loader2 = DataLoader(data2, batch_size=1, shuffle=False,
         num_workers=num_workers)
 

@@ -20,12 +20,12 @@ DEFAULT_CONFIG = {
     'camera.scale': 2,  # standard deviation gaussian of position
     'camera.focalrange': (48, 52),  # focal length in mm
     ### human ### 
-    'scene.nhuman': 1,
+    'scene.nhuman': 3,
     'scene.humanclassprob': None,
     'scene.humanheatrange': (0.7, 1.0),
     'scene.humanrotation': (0, 2*np.pi),  # around z-axis
     ### tree ###
-    'scene.ntree': 1,
+    'scene.ntree': 6,
     'scene.treeclassprob': (0.7, 0.1, 0.1, 0.1),
     'scene.treeheatrange': (0.6, 0.9),
     'scene.treealpharange': (0.05, 0.1),
@@ -34,7 +34,7 @@ DEFAULT_CONFIG = {
     # 'ground.texture': ?,  # select texture file
     'ground.texturenoise': 0.2,  # pertubate texture mapping
     # 2D bounding box in which objects can live
-    'scene.bbox': (-60, -30, 60, 30),  # x_min, y_min, x_max, y_max
+    'scene.bbox': (-50, -20, 50, 20),  # x_min, y_min, x_max, y_max
 }
 
 def parse_additional_args(remainder):
@@ -238,6 +238,7 @@ def main():
         camera.lens =  np.random.uniform(*cfg['camera.focalrange'])
 
     def remove_objects():
+        print('remove objs')
         gcoll = SCN.collection.children['Generated']
 
         for obj in gcoll.objects: 
@@ -306,10 +307,9 @@ def main():
             if bbox[0] == bbox[2] or bbox[1] == bbox[3]:  
                 continue
             bboxes.append(bbox)  # 4,
-        if len(bboxes) > 1:
-            return np.stack(bboxes, axis=0)  # nhuman x 4
-        elif len(bboxes) == 1:
-            return np.array(bboxes)  # 1 x 4
+
+        if len(bboxes) >= 1:
+            return np.array(bboxes)  # nhuman x 4
         else:  # no valid bboxes
             return np.array([])  # shape: 0,
 
@@ -369,7 +369,7 @@ def main():
     """
     npos = cfg['camera.npos']  # each frame has a different cam position
     # start the animation loop
-    anim.play(frame_range=(0, npos), num_episodes=-1, use_physics=False, 
+    anim.play(frame_range=(0, npos-1), num_episodes=-1, use_physics=False, 
         use_animation=False)
     # note: with use_animation we can watch the camera changing position
     # inside Blender, to actually see the animation we have to switch
