@@ -14,18 +14,18 @@ import cv2
 from pathlib import Path
 import json
 from typing import Dict, List, Tuple
-
 import torch
 import torch.nn as nn
 from torch import optim
 from torch.utils import data
-
 # conda install -c conda-forge tensorboard
 from torch.utils.tensorboard import SummaryWriter
-
 # https://github.com/cheind/pytorch-blender
 from blendtorch import btt
 
+classes = {
+    1: 'human', 
+}
 
 def item_transform(item, nhuman_max=6, source_format='pascal_voc', 
     target_format='coco'):
@@ -69,10 +69,6 @@ def item_transform(item, nhuman_max=6, source_format='pascal_voc',
     }
     return item
 
-classes = {
-    1: 'human', 
-}
-
 def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
     """ bbox format of 'coco' expected! -> xmin, ymin, width, height """
     os.makedirs(folder, exist_ok=True)
@@ -114,10 +110,12 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
 
 
 def main():
+    blender_instances = 2
+
     launch_args = dict(
         scene=Path(__file__).parent/'blender.blend',
         script=Path(__file__).parent/'blender.py',
-        num_instances=1, 
+        num_instances=blender_instances, 
         named_sockets=['DATA'],
     )
 
@@ -125,8 +123,8 @@ def main():
     with btt.BlenderLauncher(**launch_args) as bl:
         addr = bl.launch_info.addresses['DATA']
         ds = btt.RemoteIterableDataset(addr,  item_transform=item_transform, 
-            max_items=16)
-        dl = data.DataLoader(ds, batch_size=4, num_workers=4)
+            max_items=32)
+        dl = data.DataLoader(ds, batch_size=4, num_workers=2)
         
         iterate(dl, classes=classes)  # visualize, sanity check
 

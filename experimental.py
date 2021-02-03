@@ -19,7 +19,5 @@ import sys
 import logging
 
 
-
-
 def '__name__' == '__main__':
     pass

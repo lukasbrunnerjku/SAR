@@ -33,8 +33,8 @@ cfg = {
     'TreeSettings': {
         'N': 20,
         'Seed': (0, 1234),
-        'Fac': (0.7, 0.9),
-        'Bright': (0.2, 1.0),
+        'Fac': (0.75, 0.85),
+        'Bright': (0.5, 0.7),
         'Scale': (0.9, 1.1),
         'Class Probabilities': None,
         # angle: z-axis rotation in radians
@@ -46,7 +46,7 @@ cfg = {
         'N': 5,
         'Scale': (0.9, 1.1),
         'Class Probabilities': None,
-        'Strength': (0.5, 0.8), 
+        'Strength': (0.9, 1.0), 
         # angle: z-axis rotation in radians
         'Angle': (0, 2 * np.pi),  
         # area: x_min, y_min, x_max, y_max in m
@@ -335,7 +335,7 @@ def main():
         for pose_obj in humans:
             pose_obj.scale *= np.random.uniform(*hs['Scale'])
 
-            mesh_obj = ?
+            mesh_obj = pose_obj.children[0]
             mat = mesh_obj.data.materials[0]
             nodes = mat.node_tree.nodes
             emission = nodes.get('Emission')
@@ -344,7 +344,6 @@ def main():
 
             random_placement(pose_obj)
 
-        # randomize
         for tree in trees:
             mod = tree.modifiers['ParticleSettings']
             system = mod.particle_system
@@ -355,11 +354,18 @@ def main():
             tree.scale *= np.random.uniform(*ts['Scale'])
 
             random_placement(tree)
+        
+        return humans, trees
+
+    def clear_scene():
+        nonlocal humans, trees, camera_genenerator
+        remove_objects()
+        humans, trees = None, None
+        camera_genenerator = None
 
     def pre_animation(cam):
-        nonlocal humans, trees, camera_genenerator, build_scene      
+        nonlocal humans, trees, camera_genenerator    
         humans, trees = build_scene()
-        build_scene = recreate_scene
 
         # move close by objects to less dense regions
         forcefield2D(humans + trees)
@@ -367,7 +373,6 @@ def main():
         camera_genenerator = cam_positions(cam)
 
     def pre_frame():
-        # set camera to initial position
         next(camera_genenerator)  
 
     def post_frame(off, pub, cam):
@@ -375,16 +380,16 @@ def main():
         
         pub.publish(
             image=off.render(),  # h x w x 3
-            # note: 
             bboxes=bboxes,  # nhuman x 4; nhuman can be 0!
             cids=np.ones((len(bboxes), )),  # class labels
         )
 
     def post_animation():
-        nonlocal humans, trees, camera_genenerator 
-        remove_objects()
-        humans, trees = None, None
-        camera_genenerator = None
+        nonlocal build_scene
+        build_scene = recreate_scene 
+        
+    def post_play():
+        clear_scene()
         
     # so every Blender has its own random seed
     np.random.seed(btargs.btseed)
@@ -407,6 +412,7 @@ def main():
     anim.post_frame.add(post_frame, off, pub, cam)
     # invoked after the last animation frame has completed
     anim.post_animation.add(post_animation)
+    anim.post_play.add(post_play)
 
     # start the animation loop
     anim.play(frame_range=(0, cs['Npos']-1), num_episodes=-1, 
