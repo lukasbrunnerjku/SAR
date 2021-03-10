@@ -726,8 +726,9 @@ class DLASeg(nn.Module):
 
     def forward(self, x):
         x = self.base(x)
+        print([x_.shape for x_ in x])
         x = self.dla_up(x[self.first_level:])
-
+        print(x.shape)
         ret = {}
         for head in self.heads:
             ret[head] = self.__getattr__(head)(x)
@@ -1215,6 +1216,9 @@ def check_dataloader(dl):
 
 
 if __name__ == '__main__':
+    model = get_model({"cpt_hm": 1, "cpt_off": 2, "wh": 2})
+    model(torch.randn(1, 3, 512, 512))
+    exit()
     device = "cuda" if torch.cuda.is_available() else 'cpu'
     #device = 'cpu'
     print(f'using device: {device}')

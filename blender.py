@@ -31,7 +31,7 @@ cfg = {
         'Scale Randomness': (0, 0.15),
     },
     'TreeSettings': {
-        'N': 20,
+        'N': 20,  # number of trees in scene
         'Seed': (0, 1234),
         'Fac': (0.75, 0.85),
         'Bright': (0.5, 0.7),
@@ -41,9 +41,11 @@ cfg = {
         'Angle': (0, np.pi),  
         # area: x_min, y_min, x_max, y_max in m
         'Area': (-40, -25, 40, 25),  
+        # emission strength of stem material
+        'Strength': (0.4, 0.6),
     },
     'HumanSettings': {
-        'N': 5,
+        'N': 5,  # number of humans in scene
         'Scale': (0.9, 1.1),
         'Class Probabilities': None,
         'Strength': (0.9, 1.0), 
@@ -158,6 +160,12 @@ def random_placement(obj):
     # random rel. rotation around z-axis for objects
     angle = np.random.uniform(*angle)  # in radians
     obj.rotation_euler.z += angle  
+
+def randomize_stem_material():
+    # randomizes emission strength of tree stems
+    mat = bpy.data.materials['stem']
+    emission = mat.node_tree.nodes.get('Emission')
+    emission.inputs['Strength'].default_value = np.random.uniform(*ts['Strength'])
 
 def randomize_branch01234_material(nr: int = 0):
     # branch object for particle settings
@@ -300,6 +308,8 @@ def randomize_scene():
         randomize_tree014_particle_system(nr)
     for nr in (2, 3):
         randomize_tree23_particle_system(nr)
+    
+    randomize_stem_material()
 
     mat = bpy.data.materials['ground']  # randomize ground material
     mapping = mat.node_tree.nodes.get('Mapping')

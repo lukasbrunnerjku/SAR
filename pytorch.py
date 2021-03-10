@@ -126,7 +126,9 @@ def main():
             max_items=32)
         dl = data.DataLoader(ds, batch_size=4, num_workers=2)
         
-        iterate(dl, classes=classes)  # visualize, sanity check
+        # save images from blender instance to 'etc' folder!
+        # (use batch_size = 4)
+        # iterate(dl, classes=classes)  # visualize, sanity check
 
 
 if __name__ == '__main__':
