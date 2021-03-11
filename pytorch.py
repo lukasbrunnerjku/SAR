@@ -69,7 +69,8 @@ def item_transform(item, nhuman_max=6, source_format='pascal_voc',
     }
     return item
 
-def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
+def iterate(dl, folder='./etc', classes: Dict[int, str] = None,
+    make_grayscale=True):
     """ bbox format of 'coco' expected! -> xmin, ymin, width, height """
     os.makedirs(folder, exist_ok=True)
     DPI=96
@@ -78,6 +79,13 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
         mask = item['mask']
         print('Received', img.shape, bboxes.shape, cids.shape)
 
+        if make_grayscale:
+            img = img.to(torch.float32)
+            img = torch.mean(img, dim=1, keepdim=True)  # b x 1 x h x w
+            cmap = 'gray'
+        else:
+            cmap = None
+
         H, W = img.shape[-2:]  # img: b x 3 x h x w
         fig = plt.figure(frameon=False, figsize=(W*2/DPI,H*2/DPI), dpi=DPI)
         axs = [fig.add_axes([0,0,0.5,0.5]), fig.add_axes([0.5,0.0,0.5,0.5]), 
@@ -85,7 +93,7 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None):
             
         length = min(img.shape[0], 4)  # visualize at most 4 images of a batch
         for i in range(length):
-            axs[i].imshow(img[i].permute(1, 2, 0), origin='upper')
+            axs[i].imshow(img[i].permute(1, 2, 0), origin='upper', cmap=cmap)
             # bboxes: b x nhuman_max x 4, cids: b x nhuman_max
             # no object -> don't draw bbox; masks: b x nhuman_max
             m = mask[i].to(torch.bool)
@@ -128,7 +136,7 @@ def main():
         
         # save images from blender instance to 'etc' folder!
         # (use batch_size = 4)
-        # iterate(dl, classes=classes)  # visualize, sanity check
+        iterate(dl, classes=classes)  # visualize, sanity check
 
 
 if __name__ == '__main__':
