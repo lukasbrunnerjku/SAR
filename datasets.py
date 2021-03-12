@@ -27,12 +27,9 @@ from torchvision.utils import make_grid
 
 class SARbase(data.Dataset):
 
-    def __init__(self, folders: List[str], h: int, w: int, cache=False,
-        transform=None):
+    def __init__(self, folders: List[str], cache=False, transform=None):
         super().__init__()
         self.folders = folders  # e.g. ['data/F0', ...]
-        self.h = h  # image height
-        self.w = w  # image width
         self.cache = cache  # store images as path string or np.ndarray 
         self.transform = transform
         
@@ -164,7 +161,7 @@ class SARbase(data.Dataset):
 
     @staticmethod
     def integrate(images: Union[List[str], np.ndarray], pose_matrices: List[np.ndarray], 
-        K: np.ndarray, z: float = 30.0, idc: int = None) -> Tuple[np.ndarray, np.ndarray]:
+        K: np.ndarray, z: float = 30.0, center_idx: int = None) -> Tuple[np.ndarray, np.ndarray]:
         '''
         integral :=
         a mapping of a image sequence under perspective to another image view
@@ -177,8 +174,8 @@ class SARbase(data.Dataset):
         '''
         sequence_len = len(images)
 
-        if idc is None:  # otherwise given and must not be at the center
-            idc = sequence_len // 2  # index of center image = center of images (if odd length)
+        if center_idx is None:  # otherwise given and must not be at the center
+            center_idx = sequence_len // 2  # index of center image = center of images (if odd length)
         
         if images.ndim == 1:  # file paths
             images = SARbase.imread(images)  # 8 bit images from path
@@ -189,12 +186,12 @@ class SARbase(data.Dataset):
         # inverse of the intrinsic mapping
         K_inv = np.linalg.inv(K)
 
-        Mc = pose_matrices[idc]
+        Mc = pose_matrices[center_idx]
         Rc = Mc[:, :3]  # 3 x 3
         tc = Mc[:, 3:]  # 3 x 1
 
         for idx in range(sequence_len):
-            if idx != idc:
+            if idx != center_idx:
                 Mr = pose_matrices[idx]  # 3 x 4
                 Rr = Mr[:, :3]  # 3 x 3
                 tr = Mr[:, 3:]  # 3 x 1
@@ -205,9 +202,8 @@ class SARbase(data.Dataset):
 
                 B = K @ R_rel @ K_inv
                 B[:, 2:] += K @ t_rel / z
-                warped = cv2.warpPerspective(images[idx], B, (w, h))
 
-                integral += warped
+                integral += cv2.warpPerspective(images[idx], B, (w, h))
             else:
                 integral += images[idx]
 
@@ -224,75 +220,52 @@ class SARbase(data.Dataset):
     def _float(self, x: float):
         return float(f'{x:0.2f}')
 
-
-class SARintegral(SARbase):
-
-    def __init__(self, folders: List[str], h: int, w: int, seq_len,
-        cache=False, transform=None):
-        super().__init__(folders, h, w, cache, transform)
-        self.seq_len = seq_len
-        self.K, _ = self.load_camera_params()
-
-    def __getitem__(self, idx):
-        lane = self.data[idx]  # select lane
-        start = lane['annotated_image'] - self.seq_len // 2
-        images = lane['images'][start:start + self.seq_len]
-        pose_matrices = lane['poses'][start:start + self.seq_len]
-        images, integral = self.integrate(images, pose_matrices, self.K)
-
-        if self.transform is not None:  # data augmentation
-            images, integral = self.transform(images, integral)
-        
-        return images, integral
-
-
 class SARdata(SARbase):
 
-    def __init__(self, folders: List[str], h: int, w: int, seq_len: int, csw: int,
-        isw: int, n_max=15, use_custom_bboxes=False, cache=False, transform=None):
-        super().__init__(folders, h, w, cache, transform)
-        self.csw = csw  # center sampling window
-        self.isw = isw  # image sampling window
-        self.seq_len = seq_len  # num. of images to return by getitem
+    def __init__(self, folders: List[str], sl: int, csw: int, isw: int, 
+        n_max=10, use_custom_bboxes=False, cache=False, transform=None):
+        super().__init__(folders, cache, transform)
+        self.csw = csw  # center of sampling window
+        self.isw = isw  # images sampling window
+        self.sl = sl  # num. images to return by getitem (sequence length)
         self.K, _ = self.load_camera_params()
-        self.n_max = n_max  # max. number of bbox annotations
+        self.n_max = n_max  # max. bbox annotations (humans) per image
         self.use_custom_bboxes = use_custom_bboxes
         if use_custom_bboxes:
-            self.bboxes = self.load_custom_bboxes('./custom_bboxes/result_file1.pkl',
-                './custom_bboxes/result_file2.pkl')
+            self.bboxes = self.load_custom_bboxes('./custom_bboxes/custom_bboxes.pkl')
 
     def load_custom_bboxes(self, *paths):
         bboxes = {}
         for path in paths:
-            assert os.path.exists(path), f'{path} does not exist'
+            assert os.path.exists(path), f'{path} does not exist!'
             with open(path, 'rb') as fp:
                 bboxes.update(pickle.load(file=fp))
         return bboxes
 
     @staticmethod
-    def get_wrapped_images(images: Union[List[str], np.ndarray], 
+    def get_warp_images(images: Union[List[str], np.ndarray], 
         pose_matrices: List[np.ndarray], K: np.ndarray, z: int, 
-        idc: int = None) -> Tuple[np.ndarray, np.ndarray]:
-        seq_len = len(images)
+        center_idx: int = None) -> Tuple[np.ndarray, np.ndarray]:
+        sl = len(images)
 
-        if idc is None:  # otherwise given and must not be at the center
-            idc = seq_len // 2  # index of center image = center of images (if odd length)
+        if center_idx is None:  # otherwise given and must not be at the center
+            center_idx = sl // 2  # index of center image = center of images (if odd length)
         
         if images.ndim == 1:  # file paths
             images = SARbase.imread(images)  # 8 bit images from path
         
         h, w = images.shape[1:]  # gray scale images
-        wrapped = np.empty_like(images)  # seq_len x h x w
+        warp = np.empty_like(images)  # sl x h x w
         
         # inverse of the intrinsic mapping
         K_inv = np.linalg.inv(K)
 
-        Mc = pose_matrices[idc]
+        Mc = pose_matrices[center_idx]
         Rc = Mc[:, :3]  # 3 x 3
         tc = Mc[:, 3:]  # 3 x 1
 
-        for idx in range(seq_len):
-            if idx != idc:
+        for idx in range(sl):
+            if idx != center_idx:
                 Mr = pose_matrices[idx]  # 3 x 4
                 Rr = Mr[:, :3]  # 3 x 3
                 tr = Mr[:, 3:]  # 3 x 1
@@ -303,12 +276,15 @@ class SARdata(SARbase):
 
                 B = K @ R_rel @ K_inv
                 B[:, 2:] += K @ t_rel / z
-                warped = cv2.warpPerspective(images[idx], B, (w, h))
-                wrapped[idx] = warped
+                warp[idx] = cv2.warpPerspective(images[idx], B, (w, h))
             else:
-                wrapped[idx] = images[idx]
+                warp[idx] = images[idx]
 
-        return wrapped
+        # similar to the integral method but here we return a image sequence 
+        # where each element is transformed s.t. it shows the same content as 
+        # the center image does but from a different perspective, thus
+        # we can find humans in the center view even if they were occluded there!
+        return warp
 
     def empty_annotations(self):
         nhuman_max = self.n_max
@@ -326,15 +302,13 @@ class SARdata(SARbase):
         site = lane['site']  # e.g. F0
         line = lane['line']  # e.g. 3
 
-        # if cidx are None so are polys and thus we have a
-        # lane without any annotations
+        # if cidx are None so are polys and thus we have a lane without any annotations
         if cidx is None:
             item = self.empty_annotations()
             z = self.getAGL.get(site, self.default_agl)
-            # idc=None because center image is center of those images
-            wrapped = self.get_wrapped_images(images, 
-                poses, self.K, z)  # seq_len x h x w
-            item['images'] = wrapped
+            warp = self.get_warp_images(images, 
+                poses, self.K, z, center_idx=cidx)  # sl x h x w
+            item['images'] = warp
             return item
         
         w = self.csw // 2
@@ -342,17 +316,17 @@ class SARdata(SARbase):
 
         w = self.isw // 2
         # shift center if not enough samples available
-        while cidx - self.seq_len // 2 < 0:
+        while cidx - self.sl // 2 < 0:
             cidx += 1
-        while cidx + self.seq_len // 2 >= len(images):
+        while cidx + self.sl // 2 >= len(images):
             cidx -= 1
         
         # max(cidx - w, 0); ensure valid sampling
         low_idx = np.random.choice(np.arange(max(cidx - w, 0), cidx), 
-            replace=False, size=(self.seq_len // 2))
+            replace=False, size=(self.sl // 2))
         # min(cidx + w + 1, len(images)); ensure valid sampling
         high_idx = np.random.choice(np.arange(cidx + 1, min(cidx + w + 1, len(images))), 
-            replace=False, size=(self.seq_len // 2))
+            replace=False, size=(self.sl // 2))
 
         indices = np.concatenate((low_idx, np.array([cidx]), high_idx))
         indices = indices.astype(np.int32)
@@ -360,8 +334,8 @@ class SARdata(SARbase):
         images = images[indices]
         poses = poses[indices]
         z = self.getAGL.get(site, self.default_agl)
-        # idc=None because center image is center of those images
-        wrapped = self.get_wrapped_images(images, poses, self.K, z)  # seq_len x h x w
+        # images are already symmetric around center => center_idx=None
+        warp = self.get_warp_images(images, poses, self.K, z, center_idx=None)  # sl x h x w
 
         bboxes = np.zeros((self.n_max, 4))
         if self.use_custom_bboxes:
@@ -397,8 +371,8 @@ class SARdata(SARbase):
             # n x 4 with n x 1
             bboxes_ = np.concatenate([bboxes_, 
                 np.arange(len(bboxes_))[:, None]], axis=-1)
-            out = self.transform(image=wrapped, bboxes=bboxes_)
-            wrapped = out['image']
+            out = self.transform(image=warp, bboxes=bboxes_)
+            warp = out['image']
             bboxes_ = out['bboxes'][:, :4]  # drop added labels
 
         bboxes[:len(bboxes_)] = bboxes_  # n_max x 4
@@ -406,7 +380,7 @@ class SARdata(SARbase):
         mask = np.zeros((len(bboxes), ))
         mask[:len(bboxes_)] = 1  # n_max,
 
-        item = {'image': wrapped, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
+        item = {'image': warp, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
         return item
 
 
@@ -426,12 +400,10 @@ class Transformation:
             self.bbox_format = bbox_format 
             self.bboxes = bboxes
 
-            # build transformation
             if augmentations is None:
                 # standard augmentation if not given explicitly
                 transformations = [
-                    A.HueSaturationValue(p=0.5),
-                    A.ChannelShuffle(p=0.4),
+                    A.HueSaturationValue(p=0.4),
                     A.HorizontalFlip(p=0.2),
                     A.GaussNoise(p=0.3),
                 ]
@@ -486,13 +458,6 @@ if __name__ == '__main__':
     folders = [f'data/F{i}' for i in range(12)]
     h, w = 512, 640
 
-    """
-    ds = SARintegral(folders, h, w, seq_len=9, cache=True, transform=None)
-    images, integral = ds[0]  # original images, integral image
-    ds.show_images(images, figsize=(8, 10))
-    ds.show_image(integral)
-    """
-
     # ImageNet statistic
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
@@ -503,12 +468,13 @@ if __name__ == '__main__':
 
     h, w = 512, 640
 
-    augmentations = [
-        A.RandomBrightnessContrast(brightness_limit=0.2, 
-            contrast_limit=0.2, p=1.0),
-        A.Blur(p=1.0),
-        A.GaussNoise(p=1.0),
-    ]
+    # augmentations = [
+    #     A.RandomBrightnessContrast(brightness_limit=0.2, 
+    #         contrast_limit=0.2, p=1.0),
+    #     A.Blur(p=1.0),
+    #     A.GaussNoise(p=1.0),
+    # ]
+    augmentations = []
 
     """
     A.OneOf([
@@ -520,10 +486,10 @@ if __name__ == '__main__':
     
     transform = None
     transform = Transformation(h, w, mean, std, 
-        bbox_format='pascal_voc', augmentations=[], #augmentations, 
+        bbox_format='pascal_voc', augmentations=augmentations, 
         normalize=True, resize_crop=False, bboxes=True)
 
-    ds = SARdata(folders, h, w, seq_len=3, use_custom_bboxes=False, cache=False, 
+    ds = SARdata(folders, h, w, sl=3, use_custom_bboxes=False, cache=False, 
         transform=transform, csw=5, isw=13)
     item = ds[7] 
     mask = item['mask']

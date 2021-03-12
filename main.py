@@ -6,15 +6,11 @@ sys.path.append('./')
 from model import (ghostnet, FocusedConvLSTM, encoder_info, 
     get_scale, MixDecoder, CenternetHeads, SearchModel)
 
-
-
 if __name__ == '__main__':
-    encoder = ghostnet(pretrained=True)
-    
     input_size = (640, 512)
     reducer = FocusedConvLSTM(1, 32, 3)
 
-    encoder = ghostnet()
+    encoder = ghostnet(pretrained=True)
 
     channels = encoder_info(encoder, 3, *input_size)
     scale = get_scale(encoder, 3, *input_size, down_ratio=4)
