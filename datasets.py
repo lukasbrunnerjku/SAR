@@ -3,6 +3,7 @@ from albumentations.augmentations.bbox_utils import (
     convert_bboxes_from_albumentations,
     convert_bboxes_to_albumentations,
 )
+from albumentations.augmentations.domain_adaptation import FDA
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
@@ -214,6 +215,11 @@ class SARbase(data.Dataset):
         
         return images, integral  # original images, integral image
 
+    def __getitem__(self, idx):
+        lane = self.data[idx]  # select lane
+        images = lane['images']
+        return images
+
     def __len__(self):
         return self.size
 
@@ -223,11 +229,11 @@ class SARbase(data.Dataset):
 class SARdata(SARbase):
 
     def __init__(self, folders: List[str], sl: int, csw: int, isw: int, 
-        n_max=10, use_custom_bboxes=False, cache=False, transform=None):
+        n_max=12, use_custom_bboxes=False, cache=False, transform=None):
         super().__init__(folders, cache, transform)
         self.csw = csw  # center of sampling window
         self.isw = isw  # images sampling window
-        self.sl = sl  # num. images to return by getitem (sequence length)
+        self.sl = sl  # num. images to return by __getitem__ (sequence length)
         self.K, _ = self.load_camera_params()
         self.n_max = n_max  # max. bbox annotations (humans) per image
         self.use_custom_bboxes = use_custom_bboxes
@@ -308,12 +314,19 @@ class SARdata(SARbase):
             z = self.getAGL.get(site, self.default_agl)
             warp = self.get_warp_images(images, 
                 poses, self.K, z, center_idx=cidx)  # sl x h x w
-            item['images'] = warp
+            item['image'] = warp
             return item
         
-        w = self.csw // 2
+        w = self.csw // 2  # center sampling window, here we can choose a 
+        # ranodm center for our images to perform a perspective wrap to
+        # note: bboxes are annotated for the original center! => so if 
+        # the new center differs from the original one the bboxes have to 
+        # be transformed into the new center view!
+        # TODO  
+        assert self.csw == 0, 'Currently not supported!'
         cidx = np.random.randint(cidx - w, cidx + w + 1)  # [a, b)
 
+        assert self.sl <= len(images), 'Sequence length exceeds amount of lane images!'
         w = self.isw // 2
         # shift center if not enough samples available
         while cidx - self.sl // 2 < 0:
@@ -321,10 +334,10 @@ class SARdata(SARbase):
         while cidx + self.sl // 2 >= len(images):
             cidx -= 1
         
-        # max(cidx - w, 0); ensure valid sampling
+        # max(cidx - w, 0); ensure valid and symmetric sampling
         low_idx = np.random.choice(np.arange(max(cidx - w, 0), cidx), 
             replace=False, size=(self.sl // 2))
-        # min(cidx + w + 1, len(images)); ensure valid sampling
+        # min(cidx + w + 1, len(images)); ensure valid and symmetric sampling
         high_idx = np.random.choice(np.arange(cidx + 1, min(cidx + w + 1, len(images))), 
             replace=False, size=(self.sl // 2))
 
@@ -375,10 +388,12 @@ class SARdata(SARbase):
             warp = out['image']
             bboxes_ = out['bboxes'][:, :4]  # drop added labels
 
-        bboxes[:len(bboxes_)] = bboxes_  # n_max x 4
+        n_max_bounded = min(len(bboxes_), self.n_max)
+        bboxes[:n_max_bounded] = bboxes_[:n_max_bounded]  # n_max x 4
         cids = np.zeros((len(bboxes), ))  # n_max,
-        mask = np.zeros((len(bboxes), ))
-        mask[:len(bboxes_)] = 1  # n_max,
+        mask = np.zeros((len(bboxes), ))  # n_max,
+        cids[:n_max_bounded] = 1  # n_max,
+        mask[:n_max_bounded] = 1  # n_max,
 
         item = {'image': warp, 'bboxes': bboxes, 'cids': cids, 'mask': mask}
         return item
@@ -456,16 +471,10 @@ def convert_bbox_format(bboxes, source_fmt, target_fmt,
 
 if __name__ == '__main__':
     folders = [f'data/F{i}' for i in range(12)]
-    h, w = 512, 640
 
-    # ImageNet statistic
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-
-    # for grayscale use mean over RGB channels:
-    mean = sum(mean) / 3.0
-    std = sum(std) / 3.0
-
+    # ImageNet statistic for greyscale images
+    mean = sum([0.485, 0.456, 0.406]) / 3.0
+    std = sum([0.229, 0.224, 0.225]) / 3.0
     h, w = 512, 640
 
     # augmentations = [
@@ -474,42 +483,86 @@ if __name__ == '__main__':
     #     A.Blur(p=1.0),
     #     A.GaussNoise(p=1.0),
     # ]
-    augmentations = []
 
-    """
-    A.OneOf([
-        A.RandomBrightnessContrast(),
-        # FDA ... fourier domain adaptation
-        A.FDA(some_images, read_fn=lambda x: x),
-    ], p=1),
-    """
+    # fda_image_samples = 
+    # augmentations = [
+    #     # FDA ... fourier domain adaptation
+    #     A.FDA(fda_image_samples, read_fn=lambda x: x),
+    # ]
+
+    augmentations = []
     
-    transform = None
     transform = Transformation(h, w, mean, std, 
         bbox_format='pascal_voc', augmentations=augmentations, 
-        normalize=True, resize_crop=False, bboxes=True)
+        normalize=False, resize_crop=False, bboxes=True)
 
-    ds = SARdata(folders, h, w, sl=3, use_custom_bboxes=False, cache=False, 
-        transform=transform, csw=5, isw=13)
+    ds = SARdata(folders, sl=7, use_custom_bboxes=True, cache=False, 
+        transform=transform, csw=0, isw=13)
+    # import pdb; pdb.set_trace()
+
     item = ds[7] 
     mask = item['mask']
     bboxes = item['bboxes']
     images = item['image']
     mask = item['mask']
 
-    def show_bboxes(images, bboxes, mask):
+    def visualize(images, bboxes, mask, folder='./etc', show=False, save=True, draw_bboxes=True):
+        assert show or save
         DPI=96
         H, W = images[0].shape
-        for img in images:
+        for step, img in enumerate(images):
             fig = plt.figure(frameon=False, figsize=(W/DPI,H/DPI), dpi=DPI)
+            plt.axis('off')
             plt.imshow(img, origin='upper', cmap='gray')
-            # coco: x_min, y_min, width, height
-            for bbox in bboxes[:int(mask.sum())]:
-                width = bbox[2] - bbox[0]
-                height = bbox[3] - bbox[1]
-                rect = patches.Rectangle(bbox[:2], width , height, linewidth=2,
-                    edgecolor='g', facecolor='none')
-                plt.gca().add_patch(rect)
-            plt.show()
+            # expect bboxes in format:
+            # pascal_voc: x_min, y_min, x_ma, y_max
+            if draw_bboxes:
+                for bbox in bboxes[:int(mask.sum())]:
+                    width = bbox[2] - bbox[0]
+                    height = bbox[3] - bbox[1]
+                    rect = patches.Rectangle(bbox[:2], width , height, linewidth=2,
+                        edgecolor='g', facecolor='none')
+                    plt.gca().add_patch(rect)
+            if save:
+                fig.savefig(f'{folder}/real_{step}.png')
+            if show:
+                plt.show()
+            plt.close(fig)
 
-    show_bboxes(images, bboxes, mask)
+    #visualize(images, bboxes, mask)
+
+    def save_images_for_fda(h, w, folder='./etc', shuffle=False, warp=True):
+        transform = Transformation(h, w, mean, std, 
+            bbox_format='pascal_voc', augmentations=augmentations, 
+            normalize=False, resize_crop=False, bboxes=False)
+
+        if warp:  # warp perspective to center 
+            ds = SARdata(folders, sl=1, use_custom_bboxes=True, cache=False, 
+                transform=transform, csw=0, isw=1)
+        else:  
+            ds = SARbase(folders, transform=transform)
+
+        dl = data.DataLoader(ds, batch_size=16, num_workers=4)
+
+        DPI = 96
+        step = 0
+        for item in dl:
+            if warp:
+                images = item['image']  # b x sl x h x w
+            else:
+                images = item  # b x 1 x h x w
+                
+            h, w = images.shape[-2:]
+            images = images.view(-1, h, w)
+            for img in images:
+                fig = plt.figure(frameon=False, figsize=(w/DPI,h/DPI), dpi=DPI)
+                plt.axis('off')
+                plt.imshow(img, origin='upper', cmap='gray')
+                fig.savefig(f'{folder}/{step:02d}.png')
+                plt.close(fig)
+                step += 1
+
+    # TODO: why are images warped when sl=1 cause it would mean every image is the center!!
+
+    #save_images_for_fda(h, w, folder='./etc/fda_image_warp')
+    save_images_for_fda(h, w, folder='./etc/fda_image_no_warp', stride=10, warp=False)

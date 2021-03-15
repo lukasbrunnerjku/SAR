@@ -113,7 +113,7 @@ def iterate(dl, folder='./etc', classes: Dict[int, str] = None,
             axs[i].set_xlim(0,W-1)
             axs[i].set_ylim(H-1,0)
 
-        fig.savefig(f'{folder}/{step}.png')
+        fig.savefig(f'{folder}/synthetic_{step}.png')
         plt.close(fig)
 
 

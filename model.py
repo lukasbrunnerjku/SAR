@@ -29,13 +29,11 @@ def _make_divisible(v, divisor, min_value=None):
         new_v += divisor
     return new_v
 
-
 def hard_sigmoid(x, inplace: bool = False):
     if inplace:
         return x.add_(3.).clamp_(0., 6.).div_(6.)
     else:
         return F.relu6(x + 3.) / 6.
-
 
 class SqueezeExcite(nn.Module):
     def __init__(self, in_chs, se_ratio=0.25, reduced_base_chs=None,
@@ -55,8 +53,7 @@ class SqueezeExcite(nn.Module):
         x_se = self.conv_expand(x_se)
         x = x * self.gate_fn(x_se)
         return x    
-
-    
+   
 class ConvBnAct(nn.Module):
     def __init__(self, in_chs, out_chs, kernel_size,
                  stride=1, act_layer=nn.ReLU):
@@ -70,7 +67,6 @@ class ConvBnAct(nn.Module):
         x = self.bn1(x)
         x = self.act1(x)
         return x
-
 
 class GhostModule(nn.Module):
     def __init__(self, inp, oup, kernel_size=1, ratio=2, dw_size=3, stride=1, relu=True):
@@ -96,7 +92,6 @@ class GhostModule(nn.Module):
         x2 = self.cheap_operation(x1)
         out = torch.cat([x1,x2], dim=1)
         return out[:,:self.oup,:,:]
-
 
 class GhostBottleneck(nn.Module):
     """ Ghost bottleneck w/ optional SE"""
@@ -513,7 +508,7 @@ class SearchModel(nn.Module):
         if verbose:  # show incremental complexity gain of overall model
             modules = []
             n_layers_prev, n_p_prev, n_g_prev, flops_prev = 0, 0, 0, 0
-            for module in (self.reducer, self.encoder, self.decoder):
+            for module in (self.reducer, self.encoder, self.decoder, self.classifier):
                 if module is not None:
                     modules.append(module)
                     model = nn.Sequential(*modules)
@@ -580,6 +575,7 @@ if __name__ == '__main__':
     + FocusedConvLSTM: 25 layers, 0.0335M parameters, 0.0335M gradients, 71.3GFLOPs
     + GhostNet: 402 layers, 2.67M parameters, 2.67M gradients, 1.9GFLOPs
     + MixDecoder: 13 layers, 1.41M parameters, 1.41M gradients, 0.9GFLOPs
+    + CenternetHeads: 13 layers, 0.444M parameters, 0.444M gradients, 18.2GFLOPs
     = SearchModel: 453 layers, 4.56M parameters, 4.56M gradients, 92.3GFLOPs
     torch.Size([1, 1, 128, 160])
     torch.Size([1, 2, 128, 160])
